@@ -1,0 +1,29 @@
+\section{Tables and Lists}\label{sec:data}
+The table below checks common table support.
+
+\begin{table}[htbp]
+\centering
+\caption{Sample pipeline checks}
+\label{tab:checks}
+\begin{tabular}{lll}
+\toprule
+Component & Check & Expected result \\
+\midrule
+TeX source & Parse & Success \\
+Bibliography & Biber & Success \\
+Cross-reference & Resolve & Success \\
+PDF output & Artifact & Present \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+As shown in \cref{tab:checks}, the fixture covers the core compilation stages.
+
+\begin{itemize}
+  \item Master \texttt{.tex} file
+  \item Multiple chapter inputs
+  \item Bibliography database
+  \item Cross-references
+  \item Mathematics and tables
+  \item TikZ-generated graphics
+\end{itemize}

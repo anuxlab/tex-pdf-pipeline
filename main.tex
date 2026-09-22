@@ -1,0 +1,58 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath,amssymb}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{positioning}
+\usepackage{hyperref}
+\usepackage{cleveref}
+\usepackage[backend=biber,style=authoryear]{biblatex}
+\addbibresource{references.bib}
+
+\geometry{margin=1in}
+\title{LaTeX PDF Pipeline — End-to-End Test Document}
+\author{Pipeline Test Fixture}
+\date{\today}
+
+\begin{document}
+\maketitle
+\tableofcontents
+
+\section{Purpose}\label{sec:purpose}
+This document is a small but realistic end-to-end fixture for the repository's LaTeX CI/CD pipeline. It tests a master document, chapter inputs, mathematics, tables, graphics, cross-references, and a BibLaTeX bibliography.
+
+\section{Multi-file input}\label{sec:multifile}
+The master document loads two chapter files with \verb|\input|. See \cref{sec:math} for the mathematics example and \cref{fig:pipeline} for the generated figure.
+
+\input{chapters/01_math}
+\input{chapters/02_data}
+
+\section{Generated graphic}\label{sec:figure}
+Figure~\cref{fig:pipeline} is generated entirely with TikZ, so the fixture has no external binary image dependency.
+
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}[node distance=18mm, every node/.style={draw, rounded corners, align=center, minimum width=28mm, minimum height=9mm}]
+    \node (tex) {LaTeX source};
+    \node (latexmk) [right=of tex] {latexmk};
+    \node (pdf) [right=of latexmk] {PDF artifact};
+    \draw[->] (tex) -- (latexmk);
+    \draw[->] (latexmk) -- (pdf);
+  \end{tikzpicture}
+  \caption{Minimal pipeline flow used by this test fixture.}
+  \label{fig:pipeline}
+\end{figure}
+
+\section{Bibliography}\label{sec:bib}
+A bibliography entry is cited here to exercise the Biber path: \parencite{lamport1994}.
+
+\printbibliography
+
+\end{document}
