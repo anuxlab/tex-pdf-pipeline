@@ -1,0 +1,152 @@
+# =====================================================================
+# ci/pipeline.yaml — single source of truth for the LaTeX build.
+# Every job in .github/workflows/build-book.yml reads from this file.
+# =====================================================================
+version: 1
+
+# ---------- defaults applied to every book unless overridden ----------
+defaults:
+  engine: pdflatex                 # pdflatex | xelatex | lualatex
+  bib:    biber                    # biber | bibtex | none
+  latexmk_flags:                   # composed into args unless overridden
+    - -file-line-error
+    - -interaction=nonstopmode
+    - -synctex=1
+  work_in_root_file_dir: true
+  timeout_minutes: 45
+  artifact_retention_days: 90
+  log_retention_days: 30
+  fail_on_warnings: false          # true → job fails on any LaTeX Warning
+  preflight: true                  # run missing-file check before compile
+  fail_fast: false                 # matrix: stop other books if one fails
+
+  # Advisory only — the real trigger list lives in the workflow `on:` block
+  # (GitHub requires it statically). Kept here so preflight can also warn
+  # if a chapter edits a path the workflow does not watch.
+  trigger_paths:
+    - '**.tex'
+    - '**.bib'
+    - '**.sty'
+    - '**.cls'
+    - 'facts/**'
+    - 'figures/**'
+    - 'refs/**'
+    - 'ci/pipeline.yaml'
+    - '.github/scripts/book_ci.py'
+
+# =====================================================================
+# packages: everything the .tex sources pull in. Declared once here;
+# the workflow installs + verifies from this list. Nothing is inferred.
+# =====================================================================
+packages:
+  # How TeX Live packages are provided:
+  #   image   → use the xu-cheng/latex-action image as-is (fast, big)
+  #   tlmgr   → run `tlmgr install` for every entry below (slim images)
+  #   none    → skip installation, only verify (used for debugging)
+  install_method: image
+
+  # TeX Live collections (coarse) — installed first, then fine-grained.
+  collections:
+    - collection-latexrecommended
+    - collection-latexextra
+    - collection-science
+    - collection-bibtexextra
+    - collection-fontsrecommended
+    - collection-pictures
+    - collection-langenglish
+
+  # Individual TeX Live packages (tlmgr names). These are the ones the
+  # book's .tex files actually \usepackage or require at runtime.
+  texlive:
+    # --- font & encoding ---
+    - fontenc
+    - inputenc
+    - lmodern
+    - microtype
+    # --- layout ---
+    - geometry
+    - fancyhdr
+    - titlesec
+    - enumitem
+    - caption
+    - subcaption
+    - float
+    # --- tables ---
+    - booktabs
+    - longtable
+    - tabularx
+    - multirow
+    - makecell
+    - colortbl
+    - array
+    # --- maths & symbols ---
+    - amsmath
+    - amssymb
+    - pifont
+    # --- colour & graphics ---
+    - xcolor
+    - graphicx
+    - pgf              # tikz core
+    - pgfplots         # tikz axis plots
+    # --- code listings ---
+    - listings
+    - tcolorbox
+    # --- bibliography ---
+    - biblatex
+    - biber
+    - natbib           # kept for the legacy bibtex path
+    # --- cross-refs & hyperlinks ---
+    - hyperref
+    - cleveref
+
+  # System (apt) tools called from the build or from \write18.
+  apt:
+    - ghostscript      # gs — pdf compression, epstopdf
+    - qpdf             # linearisation in some workflows
+    - python3-pygments # minted syntax highlighting (shell-escape)
+
+  # Python packages needed by tooling invoked during compilation.
+  python:
+    - pygments         # minted backend
+
+  # Font packages (relevant for xelatex / lualatex books).
+  fonts:
+    - fonts-recommended
+    - fonts-lmodern
+
+# ---------- one entry per compilable master ----------
+books:
+  - id:     report
+    master: main.tex
+    engine: pdflatex               # explicit, overrides default
+    bib:    biber
+
+  # Example second book — uncomment / adjust if you add one.
+  # - id:     handbook
+  #   master: handbook/main.tex
+  #   engine: xelatex
+  #   bib:    bibtex
+  #   latexmk_flags:
+  #     - -file-line-error
+  #     - -interaction=nonstopmode
+  #     - -synctex=1
+  #     - -shell-escape              # minted, svg, etc.
+  #   timeout_minutes: 60
+  #   extra_packages:
+  #     texlive:
+  #       - fontspec
+  #       - polyglossia
+  #     apt:
+  #       - fonts-noto
+
+# ---------- release behaviour on v* tags ----------
+release:
+  enabled: true
+  tag_pattern: 'v*'
+  attach:
+    - report                       # ids of books to attach to the release
+
+# ---------- weekly canary (bit-rot detector) ----------
+canary:
+  enabled: true
+  cron: '0 3 * * 1'                # documentation only; see workflow

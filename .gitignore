@@ -1,0 +1,26 @@
+# LaTeX build artefacts — CI regenerates these
+*.aux
+*.log
+*.blg
+*.bbl
+*.bcf
+*.run.xml
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.out
+*.toc
+*.lof
+*.lot
+main.pdf
+*.pdf.tmp
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS noise
+.DS_Store
+Thumbs.db

@@ -1,0 +1,226 @@
+name: Build book
+
+# NOTE: `on:` and `schedule:` cannot read from ci/pipeline.yaml —
+# GitHub requires them to be static. Everything else does.
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**.tex'
+      - '**.bib'
+      - '**.sty'
+      - '**.cls'
+      - 'facts/**'
+      - 'figures/**'
+      - 'refs/**'
+      - 'ci/pipeline.yaml'
+      - '.github/scripts/book_ci.py'
+      - '.github/workflows/build-book.yml'
+      - '.latexmkrc'
+      - 'Makefile'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: book-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  max_print_line: "1000"
+  error_line: "254"
+  half_error_line: "238"
+  PIPELINE_CONFIG: ci/pipeline.yaml
+
+jobs:
+  # =====================================================================
+  # 1. Read ci/pipeline.yaml, normalise against defaults, emit outputs.
+  # =====================================================================
+  config:
+    name: Load pipeline parameters
+    runs-on: ubuntu-latest
+    outputs:
+      matrix:                   ${{ steps.load.outputs.matrix }}
+      fail_on_warnings:         ${{ steps.load.outputs.fail_on_warnings }}
+      preflight:                ${{ steps.load.outputs.preflight }}
+      fail_fast:                ${{ steps.load.outputs.fail_fast }}
+      timeout_minutes:          ${{ steps.load.outputs.timeout_minutes }}
+      artifact_retention_days:  ${{ steps.load.outputs.artifact_retention_days }}
+      log_retention_days:       ${{ steps.load.outputs.log_retention_days }}
+      work_in_root_file_dir:    ${{ steps.load.outputs.work_in_root_file_dir }}
+      release_enabled:          ${{ steps.load.outputs.release_enabled }}
+      release_tag_pattern:      ${{ steps.load.outputs.release_tag_pattern }}
+      release_attach:           ${{ steps.load.outputs.release_attach }}
+      canary_enabled:           ${{ steps.load.outputs.canary_enabled }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install PyYAML
+        run: python3 -m pip install --quiet pyyaml
+      - name: Read ${{ env.PIPELINE_CONFIG }}
+        id: load
+        run: python3 .github/scripts/book_ci.py config --file "$PIPELINE_CONFIG"
+
+  # =====================================================================
+  # 2. Build every book in the matrix, in parallel.
+  # =====================================================================
+  build:
+    name: Build ${{ matrix.book.id }}
+    needs: config
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ fromJSON(needs.config.outputs.timeout_minutes) }}
+    strategy:
+      fail-fast: ${{ needs.config.outputs.fail_fast == 'true' }}
+      matrix:
+        book: ${{ fromJSON(needs.config.outputs.matrix) }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ---- 1. read packages for this book out of ci/pipeline.yaml ----
+      - name: Load package manifest (${{ matrix.book.id }})
+        id: pkgs
+        run: |
+          python3 .github/scripts/book_ci.py packages \
+            --file ci/pipeline.yaml \
+            --book ${{ matrix.book.id }}
+
+      # ---- 2. install what the manifest declares -------------------
+      - name: Install apt packages (${{ matrix.book.id }})
+        if: steps.pkgs.outputs.apt != ''
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            ${{ steps.pkgs.outputs.apt }}
+
+      - name: Install Python packages (${{ matrix.book.id }})
+        if: steps.pkgs.outputs.python != ''
+        run: python3 -m pip install --quiet ${{ steps.pkgs.outputs.python }}
+
+      - name: Install fonts (${{ matrix.book.id }})
+        if: steps.pkgs.outputs.fonts != ''
+        run: |
+          sudo apt-get install -y --no-install-recommends \
+            ${{ steps.pkgs.outputs.fonts }}
+
+      - name: Install TeX Live packages (${{ matrix.book.id }})
+        if: steps.pkgs.outputs.install_method == 'tlmgr'
+        run: |
+          sudo tlmgr update --self || true
+          sudo tlmgr install ${{ steps.pkgs.outputs.collections }} \
+                             ${{ steps.pkgs.outputs.texlive }} \
+            || ( echo "::error::tlmgr install failed"; exit 1 )
+
+      # ---- 3. prove the packages are visible to TeX ----------------
+      - name: Verify packages (${{ matrix.book.id }})
+        run: |
+          python3 .github/scripts/book_ci.py verify-packages \
+            --file ci/pipeline.yaml \
+            --book ${{ matrix.book.id }}
+
+      # ---- 4. fail fast: every input/figure/bib must exist ---------
+      - name: Preflight (${{ matrix.book.id }})
+        if: needs.config.outputs.preflight == 'true'
+        run: |
+          python3 .github/scripts/book_ci.py preflight \
+            --master "${{ matrix.book.master }}"
+
+      # ---- 5. the whole DAG: pdflatex → biber/bibtex → pdflatex → pdflatex
+      - name: Compile (${{ matrix.book.id }})
+        id: compile
+        continue-on-error: true
+        uses: xu-cheng/latex-action@v3
+        with:
+          root_file:             ${{ matrix.book.master }}
+          work_in_root_file_dir: ${{ needs.config.outputs.work_in_root_file_dir }}
+          args:                  ${{ matrix.book.args }}
+
+      # ---- 6. parse logs, emit ::error / ::warning, step summary ---
+      - name: Diagnose (${{ matrix.book.id }})
+        id: diagnose
+        if: always()
+        continue-on-error: true
+        run: |
+          python3 .github/scripts/book_ci.py diagnose \
+            --log "${{ matrix.book.log }}" \
+            --log "${{ matrix.book.blg }}" \
+            ${{ needs.config.outputs.fail_on_warnings == 'true' && '--fail-on-warnings' || '' }}
+
+      # ---- 7. artefacts — always, even on failure ------------------
+      - name: Upload PDF (${{ matrix.book.id }})
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name:              ${{ matrix.book.id }}-pdf
+          path:              ${{ matrix.book.pdf }}
+          if-no-files-found: warn
+          retention-days:    ${{ needs.config.outputs.artifact_retention_days }}
+
+      - name: Upload logs (${{ matrix.book.id }})
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name:              ${{ matrix.book.id }}-logs
+          path:              ${{ matrix.book.logs }}
+          if-no-files-found: ignore
+          retention-days:    ${{ needs.config.outputs.log_retention_days }}
+
+      # ---- 8. fail the job if anything went wrong ------------------
+      - name: Gate (${{ matrix.book.id }})
+        if: always() && (steps.compile.outcome == 'failure' || steps.diagnose.outcome == 'failure')
+        run: |
+          echo "::error title=LaTeX build failed (${{ matrix.book.id }})::See the '${{ matrix.book.id }}-logs' artifact and the job summary above."
+          exit 1
+
+  # =====================================================================
+  # 3. Weekly canary — runs only if ci/pipeline.yaml says so.
+  # =====================================================================
+  canary:
+    name: Canary (TeX Live drift check)
+    needs: [config, build]
+    if: |
+      needs.config.outputs.canary_enabled == 'true'
+      && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Note
+        run: |
+          echo "::notice::Weekly canary run — checks TeX Live bit-rot. See the build job."
+          echo "canary enabled via ci/pipeline.yaml (canary.enabled = true)"
+
+  # =====================================================================
+  # 4. Release — attach the chosen PDFs on a v* tag.
+  # =====================================================================
+  release:
+    name: Release
+    needs: [config, build]
+    if: |
+      needs.config.outputs.release_enabled == 'true'
+      && startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Assemble release assets
+        run: |
+          set -eu
+          mkdir -p assets
+          IFS=',' read -ra ATTACH <<< "${{ needs.config.outputs.release_attach }}"
+          for id in "${ATTACH[@]}"; do
+            [ -z "$id" ] && continue
+            cp "dist/${id}-pdf"/*.pdf "assets/${id}.pdf"
+          done
+          ls -la assets
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: assets/*.pdf
+          generate_release_notes: true
